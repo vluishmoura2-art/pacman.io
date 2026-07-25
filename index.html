@@ -1,0 +1,57 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#05050b" />
+    <title>Neon Maze — Pac-Man</title>
+    <link rel="stylesheet" href="/src/css/style.css" />
+  </head>
+  <body>
+    <main class="arcade-shell" aria-labelledby="game-title">
+      <header class="game-header">
+        <div>
+          <p class="eyebrow">ARCADE PROTOCOL 01</p>
+          <h1 id="game-title">NEON <span>MAZE</span></h1>
+        </div>
+        <div class="scoreboard" aria-label="Game status">
+          <div><span>DOTS</span><strong id="dots">0 / 0</strong></div>
+          <div><span>STATUS</span><strong id="status">READY</strong></div>
+        </div>
+      </header>
+
+      <section class="mode-selector" aria-label="Game mode">
+        <button class="mode-button is-active" data-mode="single" type="button">SINGLE PLAYER</button>
+        <button class="mode-button" data-mode="multiplayer" type="button">MULTIPLAYER</button>
+      </section>
+
+      <section class="multiplayer-panel" id="multiplayer-panel" hidden aria-label="Multiplayer lobby">
+        <div class="room-actions">
+          <button id="create-room-button" type="button">CREATE ROOM</button>
+          <label class="room-input"><span>ROOM CODE</span><input id="room-code-input" maxlength="6" placeholder="ABC123" autocomplete="off" /></label>
+          <button id="join-room-button" type="button">JOIN ROOM</button>
+        </div>
+        <div class="lobby-grid">
+          <div class="room-summary" id="room-summary"><span>No room yet.</span></div>
+          <div class="role-actions">
+            <button id="claim-pacman-button" type="button">CLAIM PAC-MAN</button>
+            <button id="claim-ghost-button" type="button">CLAIM A GHOST</button>
+            <button id="start-match-button" type="button" hidden>START MATCH</button>
+          </div>
+        </div>
+        <p class="lobby-message" id="lobby-message">Connecting to multiplayer…</p>
+      </section>
+
+      <section class="game-frame" aria-label="Pac-Man game board">
+        <canvas id="game" width="840" height="760" aria-label="Use WASD or arrow keys to move your character"></canvas>
+        <div class="game-message" id="game-message"></div>
+      </section>
+
+      <footer class="game-footer">
+        <div class="instructions"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>MOVE</span></div>
+        <p>Claim a role in multiplayer, then hunt or escape in real time.</p>
+      </footer>
+    </main>
+    <script type="module" src="/src/js/app.js"></script>
+  </body>
+</html>

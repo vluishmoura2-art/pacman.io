@@ -1,0 +1,143 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Space+Mono:wght@400;700&display=swap');
+
+:root {
+  color: #fff7e8;
+  background: #05050b;
+  font-family: "Space Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(51, 40, 144, .18), transparent 42rem),
+    #05050b;
+}
+
+button { font: inherit; }
+
+.arcade-shell {
+  width: min(100%, 920px);
+  margin: 0 auto;
+  padding: clamp(18px, 4vw, 42px) clamp(14px, 3vw, 32px) 24px;
+}
+
+.game-header, .game-footer {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.eyebrow, .scoreboard span {
+  color: #847cff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  margin: 0 0 8px;
+}
+
+h1, h2 { font-family: "Press Start 2P", monospace; }
+
+h1 {
+  color: #fff4c9;
+  font-size: clamp(22px, 4vw, 34px);
+  letter-spacing: -.08em;
+  line-height: 1.2;
+  margin: 0;
+  text-shadow: 3px 3px 0 #1e2bff;
+}
+
+h1 span { color: #ffdf43; }
+
+.scoreboard {
+  display: flex;
+  gap: clamp(14px, 3vw, 30px);
+  text-align: right;
+}
+
+.scoreboard div { display: grid; gap: 4px; }
+.scoreboard span { margin: 0; font-size: 9px; }
+.scoreboard strong { color: #ffdf43; font-size: 13px; }
+
+.game-frame {
+  position: relative;
+  overflow: hidden;
+  margin-top: 22px;
+  border: 2px solid #3644ff;
+  border-radius: 10px;
+  background: #020207;
+  box-shadow: 0 0 0 4px #10103a, 0 0 34px rgba(39, 62, 255, .35), inset 0 0 45px rgba(24, 38, 135, .22);
+}
+
+canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+
+.game-message {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  padding: 24px;
+  text-align: center;
+  background: rgba(2, 2, 8, .72);
+  backdrop-filter: blur(2px);
+}
+
+.game-message.is-hidden { display: none; }
+.message-kicker { color: #ffdf43; font-size: 11px; font-weight: 700; letter-spacing: .14em; }
+.game-message h2 { max-width: 460px; color: #fff6d5; font-size: clamp(18px, 3vw, 28px); line-height: 1.45; margin: 8px auto 13px; }
+.game-message p:not(.message-kicker) { color: #c7c5df; font-size: 13px; line-height: 1.7; margin: 0 auto 24px; max-width: 430px; }
+
+#start-button, .restart-button {
+  cursor: pointer;
+  border: 0;
+  border-radius: 4px;
+  background: #ffdc35;
+  box-shadow: 4px 4px 0 #9a7310;
+  color: #151006;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 14px 18px;
+  transition: transform .12s, box-shadow .12s;
+}
+
+#start-button:hover, .restart-button:hover { transform: translate(2px, 2px); box-shadow: 2px 2px 0 #9a7310; }
+#start-button:active, .restart-button:active { transform: translate(4px, 4px); box-shadow: none; }
+
+.game-footer { align-items: center; padding: 20px 2px 0; }
+.game-footer p { color: #777396; font-size: 11px; margin: 0; text-align: center; }
+.instructions { display: flex; align-items: center; gap: 4px; color: #9794b7; font-size: 10px; }
+kbd { border: 1px solid #454261; border-bottom-width: 3px; border-radius: 3px; color: #fff4ce; font-family: inherit; font-size: 10px; padding: 4px 5px; }
+.instructions span { margin-left: 5px; }
+.restart-button { background: transparent; box-shadow: none; border: 1px solid #55517d; color: #ddd9f6; font-size: 10px; padding: 9px 11px; }
+.restart-button:hover { background: #22203b; box-shadow: none; transform: none; }
+
+@media (max-width: 600px) {
+  .game-header { align-items: flex-start; }
+  .scoreboard { gap: 12px; }
+  .scoreboard strong { font-size: 11px; }
+  .game-footer { flex-wrap: wrap; justify-content: center; }
+  .game-footer p { order: 3; flex-basis: 100%; }
+}
+
+.mode-selector { display: flex; gap: 8px; margin-top: 20px; }
+.mode-button, .room-actions button, .role-actions button { cursor: pointer; border: 1px solid #55517d; border-radius: 4px; background: #121125; color: #cfcbe9; font: 700 10px "Space Mono", monospace; letter-spacing: .04em; padding: 11px 13px; }
+.mode-button.is-active, .room-actions button:hover, .role-actions button:not(:disabled):hover { border-color: #ffdf43; background: #ffdf43; color: #151006; }
+.multiplayer-panel { margin-top: 12px; border: 1px solid #363262; border-radius: 8px; background: rgba(15, 14, 36, .88); padding: 14px; }
+.room-actions, .lobby-grid, .role-actions { display: flex; align-items: center; gap: 9px; }
+.room-actions { flex-wrap: wrap; }
+.room-input { display: flex; align-items: center; gap: 7px; color: #847cff; font-size: 9px; font-weight: 700; letter-spacing: .12em; }
+.room-input input { width: 92px; border: 1px solid #55517d; border-radius: 3px; background: #070711; color: #fff4ce; font: 700 12px "Space Mono", monospace; letter-spacing: .12em; padding: 9px; text-transform: uppercase; }
+.lobby-grid { justify-content: space-between; align-items: flex-start; margin-top: 13px; }
+.room-summary { color: #c7c5df; font-size: 10px; line-height: 1.6; }
+.room-summary strong { color: #ffdf43; display: block; letter-spacing: .08em; }
+.room-summary ul { display: flex; flex-wrap: wrap; gap: 5px; list-style: none; margin: 5px 0 0; padding: 0; }
+.room-summary li { border: 1px solid #3d3968; border-radius: 3px; color: #aea9cd; padding: 3px 5px; }
+.role-actions { flex-wrap: wrap; justify-content: end; }
+.role-actions button:disabled { cursor: not-allowed; opacity: .38; }
+.lobby-message { color: #a49fcd; font-size: 10px; margin: 12px 0 0; }
+@media (max-width: 600px) { .lobby-grid { display: grid; gap: 12px; } .role-actions { justify-content: start; } .room-input { width: 100%; } }
