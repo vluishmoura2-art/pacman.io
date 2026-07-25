@@ -27,10 +27,15 @@
 
       <section class="multiplayer-panel" id="multiplayer-panel" hidden aria-label="Multiplayer lobby">
         <div class="room-actions">
+          <label class="room-visibility"><span>ROOM TYPE</span><select id="room-visibility"><option value="public">PUBLIC</option><option value="private">PRIVATE</option></select></label>
           <button id="create-room-button" type="button">CREATE ROOM</button>
           <label class="room-input"><span>ROOM CODE</span><input id="room-code-input" maxlength="6" placeholder="ABC123" autocomplete="off" /></label>
           <button id="join-room-button" type="button">JOIN ROOM</button>
         </div>
+        <section class="public-rooms" aria-labelledby="public-rooms-title">
+          <div class="public-rooms-heading"><span id="public-rooms-title">OPEN ROOMS</span><button id="refresh-rooms-button" type="button">REFRESH</button></div>
+          <div id="public-room-list" class="public-room-list"><span>Looking for open rooms...</span></div>
+        </section>
         <div class="lobby-grid">
           <div class="room-summary" id="room-summary"><span>No room yet.</span></div>
           <div class="role-actions">
@@ -46,6 +51,14 @@
         <canvas id="game" width="840" height="760" aria-label="Use WASD or arrow keys to move your character"></canvas>
         <div class="game-message" id="game-message"></div>
       </section>
+
+      <div class="touch-controls" aria-label="Touch controls">
+        <div class="joystick" id="joystick" role="application" aria-label="Movement joystick" tabindex="0">
+          <span class="joystick-ring"></span>
+          <span class="joystick-knob" id="joystick-knob"></span>
+        </div>
+        <span class="touch-hint">DRAG TO MOVE</span>
+      </div>
 
       <footer class="game-footer">
         <div class="instructions"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>MOVE</span></div>

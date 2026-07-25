@@ -13,11 +13,16 @@ const multiplayerPanel = document.querySelector('#multiplayer-panel');
 const roomCodeInput = document.querySelector('#room-code-input');
 const roomSummary = document.querySelector('#room-summary');
 const createRoomButton = document.querySelector('#create-room-button');
+const roomVisibility = document.querySelector('#room-visibility');
 const joinRoomButton = document.querySelector('#join-room-button');
+const refreshRoomsButton = document.querySelector('#refresh-rooms-button');
+const publicRoomList = document.querySelector('#public-room-list');
 const claimPacmanButton = document.querySelector('#claim-pacman-button');
 const claimGhostButton = document.querySelector('#claim-ghost-button');
 const startMatchButton = document.querySelector('#start-match-button');
 const lobbyMessage = document.querySelector('#lobby-message');
+const joystick = document.querySelector('#joystick');
+const joystickKnob = document.querySelector('#joystick-knob');
 const gameAudio = new Audio('/assets/pacman-soundtrack.mp3');
 const caughtAudio = new Audio('/assets/pacman-die.mp3');
 
@@ -34,6 +39,8 @@ let localPlayerClock = 0;
 let localGhostClock = 0;
 let localPending = 'left';
 let audioPlaying = false;
+let publicRooms = [];
+let joystickPointerId = null;
 
 function currentGame() { return mode === 'multiplayer' ? remoteGame : localGame; }
 function send(type, payload = {}) {
@@ -68,7 +75,7 @@ function connect() {
   if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   socket = new WebSocket(`${protocol}//${location.host}/ws`);
-  socket.addEventListener('open', () => { lobbyMessage.textContent = 'Connected. Create a room or enter a room code.'; });
+  socket.addEventListener('open', () => { lobbyMessage.textContent = 'Connected. Create a room or enter a room code.'; send('rooms:list'); });
   socket.addEventListener('close', () => { lobbyMessage.textContent = 'Connection closed. Switch modes to reconnect.'; room = null; renderLobby(); });
   socket.addEventListener('message', event => handleServerEvent(JSON.parse(event.data)));
 }
@@ -77,7 +84,7 @@ function enterMultiplayer() {
   multiplayerPanel.hidden = false;
   modeButtons.forEach(button => button.classList.toggle('is-active', button.dataset.mode === mode));
   setStatus('LOBBY'); refreshHud(); connect(); renderLobby();
-  showMessage('MULTIPLAYER', 'JOIN A ROOM', 'Create a private room, share its code, then claim Pac-Man or one of four ghost slots.', null);
+  showMessage('MULTIPLAYER', 'JOIN A ROOM', 'Join an open public room or create a private code to share with friends.', null);
 }
 function myMember() { return room?.players.find(player => player.id === playerId); }
 function renderLobby() {
@@ -92,10 +99,16 @@ function renderLobby() {
   startMatchButton.hidden = !member?.host;
   if (member?.role) lobbyMessage.textContent = `You control ${member.role === 'pacman' ? 'Pac-Man' : `Ghost ${member.ghostIndex + 1}`}.`;
 }
+function renderPublicRooms() {
+  publicRoomList.innerHTML = publicRooms.length
+    ? publicRooms.map(item => '<button class="public-room" data-room-code="' + item.code + '" type="button"><strong>' + item.code + '</strong><span>' + (item.phase === 'playing' ? 'IN MATCH' : 'LOBBY') + ' · ' + item.playerCount + '/5</span><b>JOIN</b></button>').join('')
+    : '<span class="empty-rooms">No public rooms yet. Create one to get started.</span>';
+}
 function handleServerEvent(event) {
   if (event.type === 'connected') playerId = event.id;
   if (event.type === 'room:joined') roomCodeInput.value = event.roomCode;
   if (event.type === 'room:state') { room = event.room; renderLobby(); }
+  if (event.type === 'rooms:public') { publicRooms = event.rooms; renderPublicRooms(); }
   if (event.type === 'role:assigned') { myRole = event.role; lobbyMessage.textContent = `Role claimed: ${event.role === 'pacman' ? 'Pac-Man' : `Ghost ${event.ghostIndex + 1}`}.`; }
   if (event.type === 'match:state') {
     remoteGame = event.game; refreshHud();
@@ -150,16 +163,25 @@ function draw(time) {
   const game = currentGame(); if (!game) return; drawWalls(game); drawDots(game, time); game.ghosts.forEach(drawGhost); drawPlayer(game.player, time);
 }
 function loop(time) { const elapsed = Math.min(time - lastTime, 80); lastTime = time; localTick(elapsed); refreshHud(); draw(time); requestAnimationFrame(loop); }
+function controlDirection(direction) { if (!direction) return; if (mode === 'single') { localPending = direction; if (localGame.state === 'ready') startSinglePlayer(); } else if (room?.phase === 'playing') send('input:direction', { direction }); }
+function resetJoystick() { joystickKnob.style.transform = ''; }
+function moveJoystick(event) { const rect = joystick.getBoundingClientRect(); const center = rect.width / 2; const dx = event.clientX - rect.left - center; const dy = event.clientY - rect.top - center; const distance = Math.hypot(dx, dy); const limit = center * .55; const scale = distance > limit ? limit / distance : 1; joystickKnob.style.transform = 'translate(' + (dx * scale) + 'px, ' + (dy * scale) + 'px)'; if (distance >= center * .22) controlDirection(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up')); }
 
 window.addEventListener('keydown', event => {
   const direction = KEY_TO_DIRECTION[event.key]; if (!direction) return; event.preventDefault();
-  if (mode === 'single') { localPending = direction; if (localGame.state === 'ready') startSinglePlayer(); }
-  else if (room?.phase === 'playing') send('input:direction', { direction });
+  controlDirection(direction);
 });
 modeButtons.forEach(button => button.addEventListener('click', () => button.dataset.mode === 'single' ? enterSinglePlayer() : enterMultiplayer()));
-createRoomButton.addEventListener('click', () => send('room:create'));
+createRoomButton.addEventListener('click', () => send('room:create', { visibility: roomVisibility.value }));
+refreshRoomsButton.addEventListener('click', () => send('rooms:list'));
+publicRoomList.addEventListener('click', event => { const button = event.target.closest('[data-room-code]'); if (button) send('room:join', { roomCode: button.dataset.roomCode }); });
 joinRoomButton.addEventListener('click', () => send('room:join', { roomCode: roomCodeInput.value }));
 claimPacmanButton.addEventListener('click', () => send('role:claim', { role: 'pacman' }));
 claimGhostButton.addEventListener('click', () => send('role:claim', { role: 'ghost' }));
 startMatchButton.addEventListener('click', () => send('match:start'));
+joystick.addEventListener('pointerdown', event => { joystickPointerId = event.pointerId; joystick.setPointerCapture(event.pointerId); moveJoystick(event); });
+joystick.addEventListener('pointermove', event => { if (event.pointerId === joystickPointerId) moveJoystick(event); });
+joystick.addEventListener('pointerup', event => { if (event.pointerId === joystickPointerId) { joystickPointerId = null; resetJoystick(); } });
+joystick.addEventListener('pointercancel', () => { joystickPointerId = null; resetJoystick(); });
+joystick.addEventListener('keydown', event => { const direction = KEY_TO_DIRECTION[event.key]; if (direction) { event.preventDefault(); controlDirection(direction); } });
 enterSinglePlayer(); requestAnimationFrame(loop);

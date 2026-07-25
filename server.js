@@ -26,15 +26,18 @@ function send(socket, payload) {
 
 function broadcast(room, payload) { room.members.forEach(member => send(member.socket, payload)); }
 function roomCode() { return randomBytes(3).toString('hex').toUpperCase(); }
+function publicRooms() { return [...rooms.values()].filter(room => room.visibility === 'public').map(room => ({ code: room.code, phase: room.game.state === 'playing' ? 'playing' : 'lobby', playerCount: room.members.size })); }
+function emitPublicRooms() { clients.forEach(client => send(client.socket, { type: 'rooms:public', rooms: publicRooms() })); }
 function publicRoom(room) {
   return {
     code: room.code,
+    visibility: room.visibility,
     phase: room.game.state === 'playing' ? 'playing' : 'lobby',
     players: [...room.members.values()].map(({ id, name, role, ghostIndex, host }) => ({ id, name, role, ghostIndex, host })),
     availability: { pacman: ![...room.members.values()].some(member => member.role === 'pacman'), ghosts: 4 - [...room.members.values()].filter(member => member.role === 'ghost').length },
   };
 }
-function emitLobby(room) { broadcast(room, { type: 'room:state', room: publicRoom(room) }); }
+function emitLobby(room) { broadcast(room, { type: 'room:state', room: publicRoom(room) }); emitPublicRooms(); }
 function emitGame(room) { broadcast(room, { type: 'match:state', game: serialiseGame(room.game) }); }
 
 function releaseRole(member) { member.role = null; member.ghostIndex = null; }
@@ -63,6 +66,7 @@ function leaveRoom(client, disconnect = false) {
   if (!room.members.size) {
     clearInterval(room.timer);
     rooms.delete(room.code);
+    emitPublicRooms();
   } else emitLobby(room);
   if (!disconnect) send(client.socket, { type: 'room:left' });
 }
@@ -106,10 +110,12 @@ function handleMessage(client, message) {
   try { event = JSON.parse(message); } catch { return send(client.socket, { type: 'error', message: 'Invalid message.' }); }
   if (event.type === 'room:create') {
     let code = roomCode(); while (rooms.has(code)) code = roomCode();
-    const room = { code, members: new Map(), game: createGame(), lastTick: Date.now(), timer: null };
+    const visibility = event.visibility === 'private' ? 'private' : 'public';
+    const room = { code, visibility, members: new Map(), game: createGame(), lastTick: Date.now(), timer: null };
     room.timer = setInterval(() => tickRoom(room), 40);
     rooms.set(code, room); joinRoom(client, room); return;
   }
+  if (event.type === 'rooms:list') return send(client.socket, { type: 'rooms:public', rooms: publicRooms() });
   if (event.type === 'room:join') {
     const room = rooms.get(String(event.roomCode || '').trim().toUpperCase());
     if (!room) return send(client.socket, { type: 'error', message: 'Room not found. Check the room code and try again.' });
