@@ -82,7 +82,10 @@ const LARGE_LEVEL = [
 
 export const MAPS = { small: SMALL_LEVEL, medium: LEVEL, large: LARGE_LEVEL };
 
-export function pointKey({ x, y }) { return `${x},${y}`; }
+// Dot positions are stored as compact numeric tile ids instead of "x,y" strings.
+// This keeps render and networking paths allocation-free as the player eats dots.
+export function tileId(game, x, y) { return y * game.map[0].length + x; }
+export function pointKey(point, game) { return game ? tileId(game, point.x, point.y) : `${point.x},${point.y}`; }
 export function nextPoint(point, direction) {
   const vector = DIRECTIONS[direction];
   return { x: point.x + vector.x, y: point.y + vector.y };
@@ -105,7 +108,7 @@ export function createGame(settings = DEFAULT_ROOM_SETTINGS) {
   let player;
   let ghostHome;
   map.forEach((row, y) => row.forEach((cell, x) => {
-    if (cell === '.' && mode === 'coin') dots.add(`${x},${y}`);
+    if (cell === '.' && mode === 'coin') dots.add(y * row.length + x);
     if (cell === 'P') { player = { x, y, direction: 'left' }; map[y][x] = ' '; }
     if (cell === 'G') { ghostHome = { x, y }; map[y][x] = ' '; }
   }));
@@ -122,6 +125,10 @@ export function createGame(settings = DEFAULT_ROOM_SETTINGS) {
     ],
     pendingPlayerDirection: 'left',
     pendingGhostDirections: ['left', 'right', 'left', 'up'],
+    // A spatial hash is kept dirty until a collision query needs it. This makes
+    // collision work proportional to entities in Pac-Man's tile, not all ghosts.
+    ghostSpatialHash: new Map(),
+    ghostSpatialHashDirty: true,
     playerClock: 0,
     ghostClock: 0,
     mapSize,
@@ -134,7 +141,7 @@ export function createGame(settings = DEFAULT_ROOM_SETTINGS) {
 export function movePlayer(game) {
   if (canMove(game, game.player, game.pendingPlayerDirection)) game.player.direction = game.pendingPlayerDirection;
   if (canMove(game, game.player, game.player.direction)) Object.assign(game.player, nextPoint(game.player, game.player.direction));
-  game.dots.delete(pointKey(game.player));
+  game.dots.delete(tileId(game, game.player.x, game.player.y));
 }
 
 export function moveGhost(game, index, direction) {
@@ -142,6 +149,19 @@ export function moveGhost(game, index, direction) {
   if (!ghost) return;
   if (canMove(game, ghost, direction)) ghost.direction = direction;
   if (canMove(game, ghost, ghost.direction)) Object.assign(ghost, nextPoint(ghost, ghost.direction));
+  game.ghostSpatialHashDirty = true;
+}
+
+export function rebuildGhostSpatialHash(game) {
+  const grid = game.ghostSpatialHash;
+  grid.clear();
+  game.ghosts.forEach((ghost, index) => {
+    const id = tileId(game, ghost.x, ghost.y);
+    const bucket = grid.get(id);
+    if (bucket) bucket.push(index);
+    else grid.set(id, [index]);
+  });
+  game.ghostSpatialHashDirty = false;
 }
 
 export function chooseGhostDirection(game, ghost) {
@@ -159,7 +179,9 @@ export function chooseGhostDirection(game, ghost) {
 }
 
 export function hasCollision(game) {
-  return game.ghosts.some(ghost => ghost.x === game.player.x && ghost.y === game.player.y);
+  if (game.ghostSpatialHashDirty) rebuildGhostSpatialHash(game);
+  const nearbyGhosts = game.ghostSpatialHash.get(tileId(game, game.player.x, game.player.y));
+  return Boolean(nearbyGhosts?.length);
 }
 
 export function serialiseGame(game) {

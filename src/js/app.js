@@ -29,6 +29,14 @@ const claimPacmanButton = document.querySelector('#claim-pacman-button');
 const claimGhostButton = document.querySelector('#claim-ghost-button');
 const startMatchButton = document.querySelector('#start-match-button');
 const lobbyMessage = document.querySelector('#lobby-message');
+const SNAPSHOT_BLEND_MS = 100;
+const MAX_MOBILE_DPR = 1.5;
+const MAX_DESKTOP_DPR = 2;
+const DIRECTION_BY_CODE = ['up', 'down', 'left', 'right'];
+let renderScale = 1;
+let mapCache;
+let dotSprite;
+let remoteRenderGame = null;
 const joystick = document.querySelector('#joystick');
 const joystickKnob = document.querySelector('#joystick-knob');
 const gameAudio = new Audio('/assets/pacman-soundtrack.mp3');
@@ -58,7 +66,18 @@ function settingsSummary(settings) { return `${settings.mapSize.toUpperCase()} Â
 function updateModeControl() { durationSetting.hidden = matchModeInput.value !== 'time'; }
 function syncLobbySettings() { if (room?.settings) { const s = room.settings; roomNameInput.value = s.name; mapSizeInput.value = s.mapSize; pacmanSpeedInput.value = s.pacmanSpeed; ghostSpeedInput.value = s.ghostSpeed; matchModeInput.value = s.mode; durationInput.value = durationValue(s.durationSeconds); } const editable = !room || Boolean(myMember()?.host && room.phase !== 'playing'); lobbySettingInputs.forEach(input => { input.disabled = !editable; }); updateModeControl(); }
 function sendSettings() { if (room && myMember()?.host) send('room:settings', { settings: lobbySettings() }); }
-function syncCanvas(game) { if (!game?.map?.length) return; const width = game.map[0].length * TILE; const height = game.map.length * TILE; if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; } }
+function syncCanvas(game) {
+  if (!game?.map?.length) return;
+  const logicalWidth = game.map[0].length * TILE; const logicalHeight = game.map.length * TILE;
+  canvas.style.aspectRatio = `${logicalWidth} / ${logicalHeight}`;
+  const cssWidth = Math.max(1, canvas.clientWidth || logicalWidth);
+  const maxDpr = matchMedia('(pointer: coarse)').matches ? MAX_MOBILE_DPR : MAX_DESKTOP_DPR;
+  const dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
+  const width = Math.round(cssWidth * dpr); const height = Math.round((cssWidth * logicalHeight / logicalWidth) * dpr);
+  if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+  renderScale = width / logicalWidth;
+  mapCache = null;
+}
 
 function currentGame() { return mode === 'multiplayer' ? remoteGame : localGame; }
 function send(type, payload = {}) {
@@ -77,14 +96,14 @@ function dotsCount(game) { return game.dots instanceof Set ? game.dots.size : ga
 function refreshHud() { const game = currentGame(); if (game?.mode === 'time') { scoreLabelEl.textContent = 'TIME'; dotsEl.textContent = formatDuration((game.remainingMs || 0) / 1000); return; } scoreLabelEl.textContent = 'DOTS'; dotsEl.textContent = game ? `${game.totalDots - dotsCount(game)} / ${game.totalDots}` : '0 / 0'; }
 
 function enterSinglePlayer() {
-  mode = 'single'; remoteGame = null; room = null; myRole = null; localGame = createGame();
+  mode = 'single'; remoteGame = null; remoteRenderGame = null; room = null; myRole = null; localGame = createGame(); syncCanvas(localGame);
   multiplayerPanel.hidden = true;
   modeButtons.forEach(button => button.classList.toggle('is-active', button.dataset.mode === mode));
   setStatus('READY'); stopAudio(); refreshHud();
   showMessage('SINGLE PLAYER', 'COLLECT EVERY DOT', 'Use WASD or arrow keys to guide Pac-Man through the neon maze.', 'START GAME', startSinglePlayer);
 }
 function startSinglePlayer() {
-  if (localGame.state === 'won' || localGame.state === 'over') localGame = createGame();
+  if (localGame.state === 'won' || localGame.state === 'over') { localGame = createGame(); syncCanvas(localGame); }
   localGame.state = 'playing'; hideMessage(); setStatus('RUN!'); playAudio();
 }
 
@@ -110,15 +129,52 @@ function renderLobby() {
   claimPacmanButton.disabled = !room || isPlaying || !room.availability.pacman && member?.role !== 'pacman'; claimGhostButton.disabled = !room || isPlaying || !room.availability.ghosts && member?.role !== 'ghost'; startMatchButton.disabled = !member?.host || !room?.players.some(player => player.role === 'pacman') || isPlaying; startMatchButton.hidden = !member?.host; syncLobbySettings(); if (member?.role) lobbyMessage.textContent = `You control ${member.role === 'pacman' ? 'Pac-Man' : `Ghost ${member.ghostIndex + 1}`}.`;
 }
 function renderPublicRooms() { publicRoomList.innerHTML = publicRooms.length ? publicRooms.map(item => `<button class="public-room" data-room-code="${item.code}" type="button"><strong>${item.name}</strong><span>${item.phase === 'playing' ? 'IN MATCH' : 'LOBBY'} Â· ${item.playerCount}/5</span><small>${settingsSummary(item.settings)}</small><b>JOIN</b></button>`).join('') : '<span class="empty-rooms">No public rooms yet. Create one to get started.</span>'; }
+function createRemoteActor(actor) { return { x: actor.x, y: actor.y, fromX: actor.x, fromY: actor.y, toX: actor.x, toY: actor.y, direction: actor.direction, start: performance.now() }; }
+function sampleRemoteActor(actor, time) {
+  const blend = Math.min(1, (time - actor.start) / SNAPSHOT_BLEND_MS);
+  actor.x = actor.fromX + (actor.toX - actor.fromX) * blend;
+  actor.y = actor.fromY + (actor.toY - actor.fromY) * blend;
+}
+function setRemoteTarget(actor, x, y, direction, time) {
+  sampleRemoteActor(actor, time); actor.fromX = actor.x; actor.fromY = actor.y;
+  actor.toX = x; actor.toY = y; actor.direction = direction; actor.start = time;
+}
+function initialiseRemoteGame(game) {
+  game.dots = new Set(game.dots);
+  remoteGame = game;
+  remoteRenderGame = { ...game, player: createRemoteActor(game.player), ghosts: game.ghosts.map(createRemoteActor) };
+  syncCanvas(game); refreshHud();
+}
+function applyRemoteSnapshot(snapshot) {
+  if (!remoteGame || !remoteRenderGame) return;
+  const now = performance.now(); const player = snapshot.p;
+  setRemoteTarget(remoteRenderGame.player, player[0], player[1], DIRECTION_BY_CODE[player[2]], now);
+  for (let index = 0; index < remoteRenderGame.ghosts.length; index += 1) {
+    const offset = index * 3; setRemoteTarget(remoteRenderGame.ghosts[index], snapshot.g[offset], snapshot.g[offset + 1], DIRECTION_BY_CODE[snapshot.g[offset + 2]], now);
+  }
+  snapshot.d?.forEach(dot => remoteGame.dots.delete(dot));
+  if (snapshot.r !== undefined) remoteGame.remainingMs = snapshot.r;
+  if (snapshot.s) remoteGame.state = snapshot.s;
+  refreshHud();
+}
+function renderedGame(time) {
+  if (mode !== 'multiplayer' || !remoteRenderGame) return localGame;
+  sampleRemoteActor(remoteRenderGame.player, time); remoteRenderGame.ghosts.forEach(ghost => sampleRemoteActor(ghost, time));
+  return remoteRenderGame;
+}
 function handleServerEvent(event) {
-  if (event.type === 'connected') playerId = event.id;
   if (event.type === 'room:joined') roomCodeInput.value = event.roomCode;
+  if (event.type === 'connected') playerId = event.id;
   if (event.type === 'room:state') { room = event.room; renderLobby(); }
   if (event.type === 'rooms:public') { publicRooms = event.rooms; renderPublicRooms(); }
   if (event.type === 'role:assigned') { myRole = event.role; lobbyMessage.textContent = `Role claimed: ${event.role === 'pacman' ? 'Pac-Man' : `Ghost ${event.ghostIndex + 1}`}.`; }
-  if (event.type === 'match:state') {
-    remoteGame = event.game; syncCanvas(remoteGame); refreshHud();
+  if (event.type === 'match:init') {
+    initialiseRemoteGame(event.game);
     if (event.game.state === 'playing') { hideMessage(); setStatus('RUN!'); playAudio(); }
+  }
+  if (event.type === 'match:state') {
+    applyRemoteSnapshot(event);
+    if (remoteGame?.state === 'playing') { hideMessage(); setStatus('RUN!'); playAudio(); }
   }
   if (event.type === 'match:ended') {
     stopAudio(); setStatus(event.won ? 'CLEARED' : 'CAUGHT');
@@ -146,6 +202,23 @@ function endLocal(won) {
   showMessage(won ? 'MAZE CLEARED' : 'SIGNAL LOST', won ? 'YOU ESCAPED!' : 'THE GHOSTS GOT YOU', won ? 'Every yellow dot has been collected.' : 'Try a different corridor and keep your distance.', 'PLAY AGAIN', startSinglePlayer);
 }
 
+function ensureMapCache(game) {
+  const width = game.map[0].length * TILE; const height = game.map.length * TILE;
+  if (mapCache?.width === width && mapCache?.height === height && mapCache.map === game.map) return;
+  const cache = document.createElement('canvas'); cache.width = width; cache.height = height;
+  const cacheCtx = cache.getContext('2d');
+  cacheCtx.fillStyle = '#020207'; cacheCtx.fillRect(0, 0, width, height);
+  cacheCtx.fillStyle = 'rgba(255,255,255,.025)'; for (let y = 0; y < height; y += 4) cacheCtx.fillRect(0, y, width, 1);
+  cacheCtx.lineWidth = 3; cacheCtx.strokeStyle = '#2d42ff'; cacheCtx.shadowColor = '#263dff'; cacheCtx.shadowBlur = 7;
+  game.map.forEach((row, y) => row.forEach((cell, x) => { if (cell !== '#') return; const px = x * TILE; const py = y * TILE; cacheCtx.fillStyle = '#0a0b2b'; cacheCtx.fillRect(px + 2, py + 2, TILE - 4, TILE - 4); cacheCtx.beginPath(); cacheCtx.roundRect(px + 5, py + 5, TILE - 10, TILE - 10, 7); cacheCtx.stroke(); }));
+  cacheCtx.shadowBlur = 0;
+  mapCache = { map: game.map, width, height, canvas: cache };
+}
+function ensureDotSprite() {
+  if (dotSprite) return;
+  dotSprite = document.createElement('canvas'); dotSprite.width = 10; dotSprite.height = 10;
+  const spriteCtx = dotSprite.getContext('2d'); spriteCtx.fillStyle = '#ffe4a7'; spriteCtx.beginPath(); spriteCtx.arc(5, 5, 3.4, 0, Math.PI * 2); spriteCtx.fill();
+}
 function roundedRect(x, y, width, height, radius) { ctx.beginPath(); ctx.roundRect(x, y, width, height, radius); ctx.stroke(); }
 function drawWalls(game) {
   ctx.lineWidth = 3; ctx.strokeStyle = '#2d42ff'; ctx.shadowColor = '#263dff'; ctx.shadowBlur = 7;
@@ -153,8 +226,8 @@ function drawWalls(game) {
   ctx.shadowBlur = 0;
 }
 function drawDots(game, pulse) {
-  ctx.fillStyle = '#ffe4a7'; const dots = game.dots instanceof Set ? game.dots : new Set(game.dots);
-  dots.forEach(key => { const [x, y] = key.split(',').map(Number); ctx.beginPath(); ctx.arc(x * TILE + TILE / 2, y * TILE + TILE / 2, 3 + Math.sin(pulse / 210 + x + y) * 0.45, 0, Math.PI * 2); ctx.fill(); });
+  ensureDotSprite(); const columns = game.map[0].length; ctx.globalAlpha = 0.85 + Math.sin(pulse / 210) * 0.15;
+  game.dots.forEach(id => { const x = id % columns; const y = (id / columns) | 0; if (x >= 0 && x < columns && y >= 0 && y < game.map.length) ctx.drawImage(dotSprite, x * TILE + 15, y * TILE + 15); }); ctx.globalAlpha = 1;
 }
 function drawPlayer(player, time) {
   const centerX = player.x * TILE + TILE / 2; const centerY = player.y * TILE + TILE / 2; const open = 0.17 + (Math.sin(time / 75) + 1) * 0.12;
@@ -165,10 +238,12 @@ function drawGhost(ghost) {
   [-5, 5].forEach(eyeX => { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(eyeX, -3, 4, 5, 0, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#2730a5'; const direction = DIRECTIONS[ghost.direction]; ctx.beginPath(); ctx.arc(eyeX + direction.x * 1.4, -3 + direction.y * 1.4, 2, 0, Math.PI * 2); ctx.fill(); }); ctx.restore();
 }
 function draw(time) {
-  ctx.fillStyle = '#020207'; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.fillStyle = 'rgba(255,255,255,.025)'; for (let y = 0; y < canvas.height; y += 4) ctx.fillRect(0, y, canvas.width, 1);
-  const game = currentGame(); if (!game) return; drawWalls(game); drawDots(game, time); game.ghosts.forEach(drawGhost); drawPlayer(game.player, time);
+  const game = renderedGame(time); if (!game) return;
+  ensureMapCache(game);
+  ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+  ctx.drawImage(mapCache.canvas, 0, 0); drawDots(game, time); game.ghosts.forEach(drawGhost); drawPlayer(game.player, time);
 }
-function loop(time) { const elapsed = Math.min(time - lastTime, 80); lastTime = time; localTick(elapsed); refreshHud(); draw(time); requestAnimationFrame(loop); }
+function loop(time) { const elapsed = Math.min(time - lastTime, 80); lastTime = time; localTick(elapsed); draw(time); requestAnimationFrame(loop); }
 function controlDirection(direction) { if (!direction) return; if (mode === 'single') { localPending = direction; if (localGame.state === 'ready') startSinglePlayer(); } else if (room?.phase === 'playing') send('input:direction', { direction }); }
 function resetJoystick() { joystickKnob.style.transform = ''; }
 function moveJoystick(event) { const rect = joystick.getBoundingClientRect(); const center = rect.width / 2; const dx = event.clientX - rect.left - center; const dy = event.clientY - rect.top - center; const distance = Math.hypot(dx, dy); const limit = center * .55; const scale = distance > limit ? limit / distance : 1; joystickKnob.style.transform = 'translate(' + (dx * scale) + 'px, ' + (dy * scale) + 'px)'; if (distance >= center * .22) controlDirection(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up')); }
@@ -177,6 +252,7 @@ window.addEventListener('keydown', event => {
   const direction = KEY_TO_DIRECTION[event.key]; if (!direction) return; event.preventDefault();
   controlDirection(direction);
 });
+window.addEventListener('resize', () => syncCanvas(currentGame()), { passive: true });
 modeButtons.forEach(button => button.addEventListener('click', () => button.dataset.mode === 'single' ? enterSinglePlayer() : enterMultiplayer()));
 createRoomButton.addEventListener('click', () => send('room:create', { visibility: roomVisibility.value, settings: lobbySettings() }));
 refreshRoomsButton.addEventListener('click', () => send('rooms:list'));
@@ -186,9 +262,9 @@ joinRoomButton.addEventListener('click', () => send('room:join', { roomCode: roo
 claimPacmanButton.addEventListener('click', () => send('role:claim', { role: 'pacman' }));
 claimGhostButton.addEventListener('click', () => send('role:claim', { role: 'ghost' }));
 startMatchButton.addEventListener('click', () => send('match:start'));
-joystick.addEventListener('pointerdown', event => { joystickPointerId = event.pointerId; joystick.setPointerCapture(event.pointerId); moveJoystick(event); });
-joystick.addEventListener('pointermove', event => { if (event.pointerId === joystickPointerId) moveJoystick(event); });
-joystick.addEventListener('pointerup', event => { if (event.pointerId === joystickPointerId) { joystickPointerId = null; resetJoystick(); } });
-joystick.addEventListener('pointercancel', () => { joystickPointerId = null; resetJoystick(); });
+joystick.addEventListener('pointerdown', event => { joystickPointerId = event.pointerId; joystick.setPointerCapture(event.pointerId); moveJoystick(event); }, { passive: true });
+joystick.addEventListener('pointermove', event => { if (event.pointerId === joystickPointerId) moveJoystick(event); }, { passive: true });
+joystick.addEventListener('pointerup', event => { if (event.pointerId === joystickPointerId) { joystickPointerId = null; resetJoystick(); } }, { passive: true });
+joystick.addEventListener('pointercancel', () => { joystickPointerId = null; resetJoystick(); }, { passive: true });
 joystick.addEventListener('keydown', event => { const direction = KEY_TO_DIRECTION[event.key]; if (direction) { event.preventDefault(); controlDirection(direction); } });
 enterSinglePlayer(); requestAnimationFrame(loop);

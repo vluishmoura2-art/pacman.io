@@ -4,11 +4,14 @@ import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import {
   PLAYER_STEP_MS, GHOST_STEP_MS, DEFAULT_ROOM_SETTINGS, DIRECTIONS, createGame, chooseGhostDirection,
-  hasCollision, moveGhost, movePlayer, serialiseGame,
+  hasCollision, moveGhost, movePlayer, serialiseGame, tileId,
 } from './shared/game-core.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = process.cwd();
+const SIMULATION_TICK_MS = 40; // 25 authoritative updates per second.
+const SNAPSHOT_TICK_MS = 50; // 20 compact packets per second.
+const DIRECTION_CODE = { up: 0, down: 1, left: 2, right: 3 };
 const rooms = new Map();
 const clients = new Map();
 const MIME_TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.mp3': 'audio/mpeg', '.json': 'application/json; charset=utf-8' };
@@ -56,7 +59,16 @@ function publicRoom(room) {
   };
 }
 function emitLobby(room) { broadcast(room, { type: 'room:state', room: publicRoom(room) }); emitPublicRooms(); }
-function emitGame(room) { broadcast(room, { type: 'match:state', game: serialiseGame(room.game) }); }
+function emitInitialGame(room, socket) {
+  const payload = { type: 'match:init', game: serialiseGame(room.game) };
+  if (socket) send(socket, payload); else broadcast(room, payload);
+}
+function emitGame(room) {
+  const { player, ghosts, remainingMs, state } = room.game;
+  broadcast(room, { type: 'match:state', p: [player.x, player.y, DIRECTION_CODE[player.direction]], g: ghosts.flatMap(ghost => [ghost.x, ghost.y, DIRECTION_CODE[ghost.direction]]), d: room.dirtyDots, r: remainingMs, s: state });
+  room.dirtyDots.length = 0;
+  room.lastSnapshot = Date.now();
+}
 
 function releaseRole(member) { member.role = null; member.ghostIndex = null; }
 function joinRoom(client, room) {
@@ -66,7 +78,7 @@ function joinRoom(client, room) {
   room.members.set(client.id, client);
   send(client.socket, { type: 'room:joined', id: client.id, roomCode: room.code });
   emitLobby(room);
-  if (room.game.state === 'playing') emitGame(room);
+  if (room.game.state === 'playing') emitInitialGame(room, client.socket);
 }
 function leaveRoom(client, disconnect = false) {
   const room = client.room;
@@ -83,6 +95,7 @@ function leaveRoom(client, disconnect = false) {
   }
   if (!room.members.size) {
     clearInterval(room.timer);
+    clearInterval(room.snapshotTimer);
     rooms.delete(room.code);
     emitPublicRooms();
   } else emitLobby(room);
@@ -94,8 +107,10 @@ function startMatch(room) {
   room.game.deadline = room.settings.mode === 'time' ? Date.now() + room.settings.durationSeconds * 1000 : null;
   room.game.state = 'playing';
   room.lastTick = Date.now();
+  room.dirtyDots = [];
+  room.lastSnapshot = 0;
   emitLobby(room);
-  emitGame(room);
+  emitInitialGame(room);
 }
 function tickRoom(room) {
   if (room.game.state !== 'playing') return;
@@ -112,7 +127,10 @@ function tickRoom(room) {
   room.game.ghostClock += elapsed;
   while (room.game.state === 'playing' && room.game.playerClock >= playerStep) {
     room.game.playerClock -= playerStep;
+    const dotId = tileId(room.game, room.game.player.x, room.game.player.y);
+    const ateDot = room.game.dots.has(dotId);
     movePlayer(room.game);
+    if (ateDot) room.dirtyDots.push(dotId);
     if (room.game.mode === 'coin' && room.game.dots.size === 0) room.game.state = 'won';
   }
   while (room.game.state === 'playing' && room.game.ghostClock >= ghostStep) {
@@ -127,7 +145,7 @@ function tickRoom(room) {
     if (room.game.remainingMs === 0) room.game.state = 'won';
   }
   if (room.game.state === 'playing' && hasCollision(room.game)) room.game.state = 'over';
-  emitGame(room);
+  if (room.game.state !== 'playing') emitGame(room);
   if (room.game.state === 'won' || room.game.state === 'over') {
     broadcast(room, { type: 'match:ended', won: room.game.state === 'won', reason: room.game.state === 'won' ? (room.game.mode === 'time' ? 'Pac-Man survived until the timer expired.' : 'Every dot was collected.') : 'The ghosts caught Pac-Man.' });
     emitLobby(room);
@@ -141,8 +159,9 @@ function handleMessage(client, message) {
     let code = roomCode(); while (rooms.has(code)) code = roomCode();
     const visibility = event.visibility === 'private' ? 'private' : 'public';
     const settings = normaliseSettings(event.settings); settings.name ||= `Room ${code}`;
-    const room = { code, visibility, settings, members: new Map(), game: createGame(settings), lastTick: Date.now(), timer: null };
-    room.timer = setInterval(() => tickRoom(room), 40);
+    const room = { code, visibility, settings, members: new Map(), game: createGame(settings), lastTick: Date.now(), lastSnapshot: 0, dirtyDots: [], timer: null, snapshotTimer: null };
+    room.timer = setInterval(() => tickRoom(room), SIMULATION_TICK_MS);
+    room.snapshotTimer = setInterval(() => { if (room.game.state === 'playing') emitGame(room); }, SNAPSHOT_TICK_MS);
     rooms.set(code, room); joinRoom(client, room); return;
   }
   if (event.type === 'rooms:list') return send(client.socket, { type: 'rooms:public', rooms: publicRooms() });
