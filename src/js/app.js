@@ -1,11 +1,12 @@
-import {
-  TILE, DIRECTIONS, LEVEL, createGame, chooseGhostDirection, hasCollision,
+﻿import {
+  TILE, DIRECTIONS, createGame, chooseGhostDirection, hasCollision,
   moveGhost, movePlayer,
 } from '/shared/game-core.js';
 
 const canvas = document.querySelector('#game');
 const ctx = canvas.getContext('2d');
 const dotsEl = document.querySelector('#dots');
+const scoreLabelEl = document.querySelector('#score-label');
 const statusEl = document.querySelector('#status');
 const messageEl = document.querySelector('#game-message');
 const modeButtons = document.querySelectorAll('[data-mode]');
@@ -14,6 +15,13 @@ const roomCodeInput = document.querySelector('#room-code-input');
 const roomSummary = document.querySelector('#room-summary');
 const createRoomButton = document.querySelector('#create-room-button');
 const roomVisibility = document.querySelector('#room-visibility');
+const roomNameInput = document.querySelector('#room-name-input');
+const mapSizeInput = document.querySelector('#map-size-input');
+const pacmanSpeedInput = document.querySelector('#pacman-speed-input');
+const ghostSpeedInput = document.querySelector('#ghost-speed-input');
+const matchModeInput = document.querySelector('#match-mode-input');
+const durationInput = document.querySelector('#duration-input');
+const durationSetting = document.querySelector('#duration-setting');
 const joinRoomButton = document.querySelector('#join-room-button');
 const refreshRoomsButton = document.querySelector('#refresh-rooms-button');
 const publicRoomList = document.querySelector('#public-room-list');
@@ -41,6 +49,16 @@ let localPending = 'left';
 let audioPlaying = false;
 let publicRooms = [];
 let joystickPointerId = null;
+const lobbySettingInputs = [roomNameInput, mapSizeInput, pacmanSpeedInput, ghostSpeedInput, matchModeInput, durationInput];
+function formatDuration(seconds) { const safe = Math.max(0, Math.ceil(Number(seconds) || 0)); return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, '0')}`; }
+function durationSeconds() { const parts = durationInput.value.split(':').map(Number); return Math.min(600, Math.max(1, (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0))); }
+function durationValue(seconds) { const safe = Math.min(600, Math.max(1, Number(seconds) || 60)); return `00:${String(Math.floor(safe / 60)).padStart(2, '0')}:${String(safe % 60).padStart(2, '0')}`; }
+function lobbySettings() { return { name: roomNameInput.value.trim(), mapSize: mapSizeInput.value, pacmanSpeed: Number(pacmanSpeedInput.value), ghostSpeed: Number(ghostSpeedInput.value), mode: matchModeInput.value, durationSeconds: durationSeconds() }; }
+function settingsSummary(settings) { return `${settings.mapSize.toUpperCase()} · P ${settings.pacmanSpeed} · G ${settings.ghostSpeed} · ${settings.mode === 'time' ? formatDuration(settings.durationSeconds) : 'COINS'}`; }
+function updateModeControl() { durationSetting.hidden = matchModeInput.value !== 'time'; }
+function syncLobbySettings() { if (room?.settings) { const s = room.settings; roomNameInput.value = s.name; mapSizeInput.value = s.mapSize; pacmanSpeedInput.value = s.pacmanSpeed; ghostSpeedInput.value = s.ghostSpeed; matchModeInput.value = s.mode; durationInput.value = durationValue(s.durationSeconds); } const editable = !room || Boolean(myMember()?.host && room.phase !== 'playing'); lobbySettingInputs.forEach(input => { input.disabled = !editable; }); updateModeControl(); }
+function sendSettings() { if (room && myMember()?.host) send('room:settings', { settings: lobbySettings() }); }
+function syncCanvas(game) { if (!game?.map?.length) return; const width = game.map[0].length * TILE; const height = game.map.length * TILE; if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; } }
 
 function currentGame() { return mode === 'multiplayer' ? remoteGame : localGame; }
 function send(type, payload = {}) {
@@ -55,9 +73,8 @@ function showMessage(kicker, title, body, buttonText, action) {
 function hideMessage() { messageEl.classList.add('is-hidden'); }
 function stopAudio() { gameAudio.pause(); audioPlaying = false; }
 function playAudio() { if (!audioPlaying) { gameAudio.currentTime = 6; gameAudio.play().catch(() => {}); audioPlaying = true; } }
-function updateHud(game) { dotsEl.textContent = game ? `${game.totalDots - game.dots.length ?? 0} / ${game.totalDots}` : '0 / 0'; }
 function dotsCount(game) { return game.dots instanceof Set ? game.dots.size : game.dots.length; }
-function refreshHud() { const game = currentGame(); dotsEl.textContent = game ? `${game.totalDots - dotsCount(game)} / ${game.totalDots}` : '0 / 0'; }
+function refreshHud() { const game = currentGame(); if (game?.mode === 'time') { scoreLabelEl.textContent = 'TIME'; dotsEl.textContent = formatDuration((game.remainingMs || 0) / 1000); return; } scoreLabelEl.textContent = 'DOTS'; dotsEl.textContent = game ? `${game.totalDots - dotsCount(game)} / ${game.totalDots}` : '0 / 0'; }
 
 function enterSinglePlayer() {
   mode = 'single'; remoteGame = null; room = null; myRole = null; localGame = createGame();
@@ -88,22 +105,11 @@ function enterMultiplayer() {
 }
 function myMember() { return room?.players.find(player => player.id === playerId); }
 function renderLobby() {
-  const member = myMember();
-  const isPlaying = room?.phase === 'playing';
-  roomSummary.innerHTML = room
-    ? `<strong>ROOM ${room.code}</strong><span>${room.players.length}/5 connected</span><ul>${room.players.map(player => `<li>${player.host ? 'HOST · ' : ''}${player.role === 'pacman' ? 'PAC-MAN' : player.role === 'ghost' ? `GHOST ${player.ghostIndex + 1}` : 'SPECTATOR'}</li>`).join('')}</ul>`
-    : '<span>No room yet.</span>';
-  claimPacmanButton.disabled = !room || isPlaying || !room.availability.pacman && member?.role !== 'pacman';
-  claimGhostButton.disabled = !room || isPlaying || !room.availability.ghosts && member?.role !== 'ghost';
-  startMatchButton.disabled = !member?.host || !room?.players.some(player => player.role === 'pacman') || isPlaying;
-  startMatchButton.hidden = !member?.host;
-  if (member?.role) lobbyMessage.textContent = `You control ${member.role === 'pacman' ? 'Pac-Man' : `Ghost ${member.ghostIndex + 1}`}.`;
+  const member = myMember(); const isPlaying = room?.phase === 'playing';
+  roomSummary.innerHTML = room ? `<strong>${room.name} · ${room.code}</strong><span>${settingsSummary(room.settings)}</span><span>${room.players.length}/5 connected</span><ul>${room.players.map(player => `<li>${player.host ? 'HOST · ' : ''}${player.role === 'pacman' ? 'PAC-MAN' : player.role === 'ghost' ? `GHOST ${player.ghostIndex + 1}` : 'SPECTATOR'}</li>`).join('')}</ul>` : '<span>Choose match settings, then create a room.</span>';
+  claimPacmanButton.disabled = !room || isPlaying || !room.availability.pacman && member?.role !== 'pacman'; claimGhostButton.disabled = !room || isPlaying || !room.availability.ghosts && member?.role !== 'ghost'; startMatchButton.disabled = !member?.host || !room?.players.some(player => player.role === 'pacman') || isPlaying; startMatchButton.hidden = !member?.host; syncLobbySettings(); if (member?.role) lobbyMessage.textContent = `You control ${member.role === 'pacman' ? 'Pac-Man' : `Ghost ${member.ghostIndex + 1}`}.`;
 }
-function renderPublicRooms() {
-  publicRoomList.innerHTML = publicRooms.length
-    ? publicRooms.map(item => '<button class="public-room" data-room-code="' + item.code + '" type="button"><strong>' + item.code + '</strong><span>' + (item.phase === 'playing' ? 'IN MATCH' : 'LOBBY') + ' · ' + item.playerCount + '/5</span><b>JOIN</b></button>').join('')
-    : '<span class="empty-rooms">No public rooms yet. Create one to get started.</span>';
-}
+function renderPublicRooms() { publicRoomList.innerHTML = publicRooms.length ? publicRooms.map(item => `<button class="public-room" data-room-code="${item.code}" type="button"><strong>${item.name}</strong><span>${item.phase === 'playing' ? 'IN MATCH' : 'LOBBY'} · ${item.playerCount}/5</span><small>${settingsSummary(item.settings)}</small><b>JOIN</b></button>`).join('') : '<span class="empty-rooms">No public rooms yet. Create one to get started.</span>'; }
 function handleServerEvent(event) {
   if (event.type === 'connected') playerId = event.id;
   if (event.type === 'room:joined') roomCodeInput.value = event.roomCode;
@@ -111,7 +117,7 @@ function handleServerEvent(event) {
   if (event.type === 'rooms:public') { publicRooms = event.rooms; renderPublicRooms(); }
   if (event.type === 'role:assigned') { myRole = event.role; lobbyMessage.textContent = `Role claimed: ${event.role === 'pacman' ? 'Pac-Man' : `Ghost ${event.ghostIndex + 1}`}.`; }
   if (event.type === 'match:state') {
-    remoteGame = event.game; refreshHud();
+    remoteGame = event.game; syncCanvas(remoteGame); refreshHud();
     if (event.game.state === 'playing') { hideMessage(); setStatus('RUN!'); playAudio(); }
   }
   if (event.type === 'match:ended') {
@@ -172,8 +178,9 @@ window.addEventListener('keydown', event => {
   controlDirection(direction);
 });
 modeButtons.forEach(button => button.addEventListener('click', () => button.dataset.mode === 'single' ? enterSinglePlayer() : enterMultiplayer()));
-createRoomButton.addEventListener('click', () => send('room:create', { visibility: roomVisibility.value }));
+createRoomButton.addEventListener('click', () => send('room:create', { visibility: roomVisibility.value, settings: lobbySettings() }));
 refreshRoomsButton.addEventListener('click', () => send('rooms:list'));
+[roomNameInput, mapSizeInput, pacmanSpeedInput, ghostSpeedInput, matchModeInput, durationInput].forEach(input => input.addEventListener('change', () => { updateModeControl(); sendSettings(); }));
 publicRoomList.addEventListener('click', event => { const button = event.target.closest('[data-room-code]'); if (button) send('room:join', { roomCode: button.dataset.roomCode }); });
 joinRoomButton.addEventListener('click', () => send('room:join', { roomCode: roomCodeInput.value }));
 claimPacmanButton.addEventListener('click', () => send('role:claim', { role: 'pacman' }));

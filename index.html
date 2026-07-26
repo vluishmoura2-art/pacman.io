@@ -15,7 +15,7 @@
           <h1 id="game-title">NEON <span>MAZE</span></h1>
         </div>
         <div class="scoreboard" aria-label="Game status">
-          <div><span>DOTS</span><strong id="dots">0 / 0</strong></div>
+          <div><span id="score-label">DOTS</span><strong id="dots">0 / 0</strong></div>
           <div><span>STATUS</span><strong id="status">READY</strong></div>
         </div>
       </header>
@@ -32,6 +32,14 @@
           <label class="room-input"><span>ROOM CODE</span><input id="room-code-input" maxlength="6" placeholder="ABC123" autocomplete="off" /></label>
           <button id="join-room-button" type="button">JOIN ROOM</button>
         </div>
+        <section class="room-settings" id="room-settings" aria-label="Match settings">
+          <label class="setting-field setting-name"><span>ROOM NAME</span><input id="room-name-input" maxlength="32" placeholder="Room name" autocomplete="off" /></label>
+          <label class="setting-field"><span>MAP SIZE</span><select id="map-size-input"><option value="small">SMALL</option><option value="medium">MEDIUM</option><option value="large">LARGE</option></select></label>
+          <label class="setting-field"><span>PAC-MAN SPEED</span><input id="pacman-speed-input" type="number" min="1" max="20" value="10" /></label>
+          <label class="setting-field"><span>GHOST SPEED</span><input id="ghost-speed-input" type="number" min="1" max="20" value="10" /></label>
+          <label class="setting-field"><span>MODE</span><select id="match-mode-input"><option value="coin">BY COIN</option><option value="time">BY TIME</option></select></label>
+          <label class="setting-field" id="duration-setting"><span>DURATION</span><input id="duration-input" type="time" min="00:01" max="10:00" step="1" value="00:01:00" /></label>
+        </section>
         <section class="public-rooms" aria-labelledby="public-rooms-title">
           <div class="public-rooms-heading"><span id="public-rooms-title">OPEN ROOMS</span><button id="refresh-rooms-button" type="button">REFRESH</button></div>
           <div id="public-room-list" class="public-room-list"><span>Looking for open rooms...</span></div>

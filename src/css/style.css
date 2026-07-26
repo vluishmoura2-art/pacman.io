@@ -166,3 +166,12 @@ kbd { border: 1px solid #454261; border-bottom-width: 3px; border-radius: 3px; c
   .game-footer { flex-wrap: wrap; justify-content: center; }.game-footer p { flex-basis: 100%; }
 }
 @media (min-width: 601px) and (max-width: 980px) { .arcade-shell { width: min(100%, 880px); padding-inline: clamp(20px,5vw,42px); }.game-footer { justify-content: center; } }
+
+.room-settings { display: grid; grid-template-columns: 1.5fr repeat(5, minmax(92px, 1fr)); gap: 9px; margin-top: 13px; border-top: 1px solid #2d2a52; padding-top: 12px; }
+.setting-field { display: grid; gap: 6px; color: #847cff; font-size: 9px; font-weight: 700; letter-spacing: .1em; }
+.setting-field input, .setting-field select { width: 100%; border: 1px solid #55517d; border-radius: 3px; background: #070711; color: #fff4ce; font: 700 11px "Space Mono", monospace; padding: 9px; }
+.setting-field input:disabled, .setting-field select:disabled { cursor: not-allowed; opacity: .55; }
+.room-summary > span { display: block; }
+.public-room { grid-template-columns: minmax(90px, 1fr) auto auto auto; }
+.public-room small { color: #817ca6; font-size: 8px; white-space: nowrap; }
+@media (max-width: 760px) { .room-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); } .setting-name { grid-column: span 2; } .public-room { grid-template-columns: 1fr auto; } .public-room small { grid-column: 1 / -1; } }

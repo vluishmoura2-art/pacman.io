@@ -1,6 +1,14 @@
 export const TILE = 40;
 export const PLAYER_STEP_MS = 128;
 export const GHOST_STEP_MS = 160;
+export const DEFAULT_ROOM_SETTINGS = {
+  name: '',
+  mapSize: 'medium',
+  pacmanSpeed: 10,
+  ghostSpeed: 10,
+  mode: 'coin',
+  durationSeconds: 60,
+};
 export const DIRECTIONS = {
   up: { x: 0, y: -1, angle: -Math.PI / 2 },
   down: { x: 0, y: 1, angle: Math.PI / 2 },
@@ -8,6 +16,22 @@ export const DIRECTIONS = {
   right: { x: 1, y: 0, angle: 0 },
 };
 export const GHOST_COLORS = ['#ff4f69', '#39dcff', '#ff94d7', '#ffad38'];
+const SMALL_LEVEL = [
+  '###############',
+  '#.....#.......#',
+  '#.###.#.###.#.#',
+  '#.#...#...#.#.#',
+  '#.#.#####.#.#.#',
+  '#...#G..#...#.#',
+  '###.#.###.#.###',
+  '#...#.....#...#',
+  '#.#####.#####.#',
+  '#.#...#.#...#.#',
+  '#.#.#.#.#.#.#.#',
+  '#...#...P.#...#',
+  '###############',
+];
+
 export const LEVEL = [
   '#####################',
   '#.........#.........#',
@@ -30,6 +54,34 @@ export const LEVEL = [
   '#####################',
 ];
 
+const LARGE_LEVEL = [
+  '###########################',
+  '#...........#.............#',
+  '#.#####.###.#.###.#####.#.#',
+  '#.#...#...#.#.#...#...#.#.#',
+  '#.#.#.###.#.#.#.###.#.#.#.#',
+  '#...#.....#...#.....#...#.#',
+  '###.#####.#####.#####.###.#',
+  '#.....#.....#.....#.....#.#',
+  '#.###.#.###.#.###.#.###.#.#',
+  '#.#...#.#...G...#.#...#.#.#',
+  '#.#.###.#.#######.#.###.#.#',
+  '#.#.....#...#.....#.....#.#',
+  '#.#####.###.#.###.#####.#.#',
+  '#.....#.....#.....#.....#.#',
+  '###.#.#.#########.#.#.###.#',
+  '#...#.#.....#.....#.#...#.#',
+  '#.###.#####.#.#####.###.#.#',
+  '#.#.....#...#...#.....#.#.#',
+  '#.#.###.#.#####.#.###.#.#.#',
+  '#...#...#...P...#...#...#.#',
+  '#.#####.#########.#####.#.#',
+  '#.........................#',
+  '###########################',
+];
+
+export const MAPS = { small: SMALL_LEVEL, medium: LEVEL, large: LARGE_LEVEL };
+
 export function pointKey({ x, y }) { return `${x},${y}`; }
 export function nextPoint(point, direction) {
   const vector = DIRECTIONS[direction];
@@ -45,13 +97,15 @@ export function opposite(direction) {
   return { up: 'down', down: 'up', left: 'right', right: 'left' }[direction];
 }
 
-export function createGame() {
-  const map = LEVEL.map(row => row.split(''));
+export function createGame(settings = DEFAULT_ROOM_SETTINGS) {
+  const mapSize = MAPS[settings.mapSize] ? settings.mapSize : DEFAULT_ROOM_SETTINGS.mapSize;
+  const mode = settings.mode === 'time' ? 'time' : 'coin';
+  const map = MAPS[mapSize].map(row => row.split(''));
   const dots = new Set();
   let player;
   let ghostHome;
   map.forEach((row, y) => row.forEach((cell, x) => {
-    if (cell === '.') dots.add(`${x},${y}`);
+    if (cell === '.' && mode === 'coin') dots.add(`${x},${y}`);
     if (cell === 'P') { player = { x, y, direction: 'left' }; map[y][x] = ' '; }
     if (cell === 'G') { ghostHome = { x, y }; map[y][x] = ' '; }
   }));
@@ -70,6 +124,9 @@ export function createGame() {
     pendingGhostDirections: ['left', 'right', 'left', 'up'],
     playerClock: 0,
     ghostClock: 0,
+    mapSize,
+    mode,
+    remainingMs: mode === 'time' ? Math.max(1, Number(settings.durationSeconds) || 60) * 1000 : null,
     state: 'ready',
   };
 }
@@ -112,6 +169,9 @@ export function serialiseGame(game) {
     totalDots: game.totalDots,
     player: game.player,
     ghosts: game.ghosts,
+    mapSize: game.mapSize,
+    mode: game.mode,
+    remainingMs: game.remainingMs,
     state: game.state,
   };
 }

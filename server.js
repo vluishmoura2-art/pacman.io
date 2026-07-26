@@ -3,7 +3,7 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import {
-  PLAYER_STEP_MS, GHOST_STEP_MS, DIRECTIONS, createGame, chooseGhostDirection,
+  PLAYER_STEP_MS, GHOST_STEP_MS, DEFAULT_ROOM_SETTINGS, DIRECTIONS, createGame, chooseGhostDirection,
   hasCollision, moveGhost, movePlayer, serialiseGame,
 } from './shared/game-core.js';
 
@@ -12,6 +12,22 @@ const ROOT = process.cwd();
 const rooms = new Map();
 const clients = new Map();
 const MIME_TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.mp3': 'audio/mpeg', '.json': 'application/json; charset=utf-8' };
+function clamp(value, min, max, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, Math.round(number))) : fallback;
+}
+function normaliseSettings(value = {}) {
+  return {
+    name: String(value.name ?? '').trim().slice(0, 32),
+    mapSize: ['small', 'medium', 'large'].includes(value.mapSize) ? value.mapSize : DEFAULT_ROOM_SETTINGS.mapSize,
+    pacmanSpeed: clamp(value.pacmanSpeed, 1, 20, DEFAULT_ROOM_SETTINGS.pacmanSpeed),
+    ghostSpeed: clamp(value.ghostSpeed, 1, 20, DEFAULT_ROOM_SETTINGS.ghostSpeed),
+    mode: value.mode === 'time' ? 'time' : 'coin',
+    durationSeconds: clamp(value.durationSeconds, 1, 600, DEFAULT_ROOM_SETTINGS.durationSeconds),
+  };
+}
+function roomName(room) { return room.settings.name || `Room ${room.code}`; }
+function speedStep(baseStep, speed) { return Math.max(1, Math.round(baseStep * 10 / speed)); }
 
 function send(socket, payload) {
   if (socket.destroyed) return;
@@ -26,12 +42,14 @@ function send(socket, payload) {
 
 function broadcast(room, payload) { room.members.forEach(member => send(member.socket, payload)); }
 function roomCode() { return randomBytes(3).toString('hex').toUpperCase(); }
-function publicRooms() { return [...rooms.values()].filter(room => room.visibility === 'public').map(room => ({ code: room.code, phase: room.game.state === 'playing' ? 'playing' : 'lobby', playerCount: room.members.size })); }
+function publicRooms() { return [...rooms.values()].filter(room => room.visibility === 'public').map(room => ({ code: room.code, name: roomName(room), phase: room.game.state === 'playing' ? 'playing' : 'lobby', playerCount: room.members.size, settings: room.settings })); }
 function emitPublicRooms() { clients.forEach(client => send(client.socket, { type: 'rooms:public', rooms: publicRooms() })); }
 function publicRoom(room) {
   return {
     code: room.code,
     visibility: room.visibility,
+    name: roomName(room),
+    settings: room.settings,
     phase: room.game.state === 'playing' ? 'playing' : 'lobby',
     players: [...room.members.values()].map(({ id, name, role, ghostIndex, host }) => ({ id, name, role, ghostIndex, host })),
     availability: { pacman: ![...room.members.values()].some(member => member.role === 'pacman'), ghosts: 4 - [...room.members.values()].filter(member => member.role === 'ghost').length },
@@ -72,7 +90,8 @@ function leaveRoom(client, disconnect = false) {
 }
 
 function startMatch(room) {
-  room.game = createGame();
+  room.game = createGame(room.settings);
+  room.game.deadline = room.settings.mode === 'time' ? Date.now() + room.settings.durationSeconds * 1000 : null;
   room.game.state = 'playing';
   room.lastTick = Date.now();
   emitLobby(room);
@@ -83,24 +102,34 @@ function tickRoom(room) {
   const now = Date.now();
   const elapsed = Math.min(now - room.lastTick, 80);
   room.lastTick = now;
+  if (room.game.mode === 'time') {
+    room.game.remainingMs = Math.max(0, room.game.deadline - now);
+    if (room.game.remainingMs === 0) room.game.state = 'won';
+  }
+  const playerStep = speedStep(PLAYER_STEP_MS, room.settings.pacmanSpeed);
+  const ghostStep = speedStep(GHOST_STEP_MS, room.settings.ghostSpeed);
   room.game.playerClock += elapsed;
   room.game.ghostClock += elapsed;
-  if (room.game.playerClock >= PLAYER_STEP_MS) {
-    room.game.playerClock %= PLAYER_STEP_MS;
+  while (room.game.state === 'playing' && room.game.playerClock >= playerStep) {
+    room.game.playerClock -= playerStep;
     movePlayer(room.game);
-    if (room.game.dots.size === 0) room.game.state = 'won';
+    if (room.game.mode === 'coin' && room.game.dots.size === 0) room.game.state = 'won';
   }
-  if (room.game.state === 'playing' && room.game.ghostClock >= GHOST_STEP_MS) {
-    room.game.ghostClock %= GHOST_STEP_MS;
+  while (room.game.state === 'playing' && room.game.ghostClock >= ghostStep) {
+    room.game.ghostClock -= ghostStep;
     room.game.ghosts.forEach((ghost, index) => {
       const owner = [...room.members.values()].find(member => member.role === 'ghost' && member.ghostIndex === index);
       moveGhost(room.game, index, owner ? room.game.pendingGhostDirections[index] : chooseGhostDirection(room.game, ghost));
     });
   }
+  if (room.game.mode === 'time') {
+    room.game.remainingMs = Math.max(0, room.game.deadline - Date.now());
+    if (room.game.remainingMs === 0) room.game.state = 'won';
+  }
   if (room.game.state === 'playing' && hasCollision(room.game)) room.game.state = 'over';
   emitGame(room);
   if (room.game.state === 'won' || room.game.state === 'over') {
-    broadcast(room, { type: 'match:ended', won: room.game.state === 'won', reason: room.game.state === 'won' ? 'Every dot was collected.' : 'The ghosts caught Pac-Man.' });
+    broadcast(room, { type: 'match:ended', won: room.game.state === 'won', reason: room.game.state === 'won' ? (room.game.mode === 'time' ? 'Pac-Man survived until the timer expired.' : 'Every dot was collected.') : 'The ghosts caught Pac-Man.' });
     emitLobby(room);
   }
 }
@@ -111,7 +140,8 @@ function handleMessage(client, message) {
   if (event.type === 'room:create') {
     let code = roomCode(); while (rooms.has(code)) code = roomCode();
     const visibility = event.visibility === 'private' ? 'private' : 'public';
-    const room = { code, visibility, members: new Map(), game: createGame(), lastTick: Date.now(), timer: null };
+    const settings = normaliseSettings(event.settings); settings.name ||= `Room ${code}`;
+    const room = { code, visibility, settings, members: new Map(), game: createGame(settings), lastTick: Date.now(), timer: null };
     room.timer = setInterval(() => tickRoom(room), 40);
     rooms.set(code, room); joinRoom(client, room); return;
   }
@@ -124,6 +154,14 @@ function handleMessage(client, message) {
   }
   const room = client.room;
   if (!room) return send(client.socket, { type: 'error', message: 'Join a room first.' });
+  if (event.type === 'room:settings') {
+    if (!client.host) return send(client.socket, { type: 'error', message: 'Only the room host can change settings.' });
+    if (room.game.state === 'playing') return send(client.socket, { type: 'error', message: 'Settings are locked while the match is running.' });
+    room.settings = normaliseSettings({ ...room.settings, ...event.settings });
+    room.settings.name ||= `Room ${room.code}`;
+    room.game = createGame(room.settings);
+    emitLobby(room); return;
+  }
   if (event.type === 'room:leave') return leaveRoom(client);
   if (event.type === 'role:claim') {
     if (room.game.state === 'playing') return send(client.socket, { type: 'error', message: 'Roles are locked while the match is running.' });
