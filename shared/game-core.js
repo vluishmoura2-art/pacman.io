@@ -141,7 +141,8 @@ export function createGame(settings = DEFAULT_ROOM_SETTINGS) {
 export function movePlayer(game) {
   if (canMove(game, game.player, game.pendingPlayerDirection)) game.player.direction = game.pendingPlayerDirection;
   if (canMove(game, game.player, game.player.direction)) Object.assign(game.player, nextPoint(game.player, game.player.direction));
-  game.dots.delete(tileId(game, game.player.x, game.player.y));
+  const dotId = tileId(game, game.player.x, game.player.y);
+  return game.dots.delete(dotId) ? dotId : null;
 }
 
 export function moveGhost(game, index, direction) {

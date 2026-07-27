@@ -129,7 +129,7 @@ function renderLobby() {
   claimPacmanButton.disabled = !room || isPlaying || !room.availability.pacman && member?.role !== 'pacman'; claimGhostButton.disabled = !room || isPlaying || !room.availability.ghosts && member?.role !== 'ghost'; startMatchButton.disabled = !member?.host || !room?.players.some(player => player.role === 'pacman') || isPlaying; startMatchButton.hidden = !member?.host; syncLobbySettings(); if (member?.role) lobbyMessage.textContent = `You control ${member.role === 'pacman' ? 'Pac-Man' : `Ghost ${member.ghostIndex + 1}`}.`;
 }
 function renderPublicRooms() { publicRoomList.innerHTML = publicRooms.length ? publicRooms.map(item => `<button class="public-room" data-room-code="${item.code}" type="button"><strong>${item.name}</strong><span>${item.phase === 'playing' ? 'IN MATCH' : 'LOBBY'} · ${item.playerCount}/5</span><small>${settingsSummary(item.settings)}</small><b>JOIN</b></button>`).join('') : '<span class="empty-rooms">No public rooms yet. Create one to get started.</span>'; }
-function createRemoteActor(actor) { return { x: actor.x, y: actor.y, fromX: actor.x, fromY: actor.y, toX: actor.x, toY: actor.y, direction: actor.direction, start: performance.now() }; }
+function createRemoteActor(actor) { return { ...actor, x: actor.x, y: actor.y, fromX: actor.x, fromY: actor.y, toX: actor.x, toY: actor.y, direction: actor.direction, start: performance.now() }; }
 function sampleRemoteActor(actor, time) {
   const blend = Math.min(1, (time - actor.start) / SNAPSHOT_BLEND_MS);
   actor.x = actor.fromX + (actor.toX - actor.fromX) * blend;

@@ -1,14 +1,15 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { extname, join, normalize } from 'node:path';
+import { extname, isAbsolute, join, relative, resolve } from 'node:path';
 import {
   PLAYER_STEP_MS, GHOST_STEP_MS, DEFAULT_ROOM_SETTINGS, DIRECTIONS, createGame, chooseGhostDirection,
-  hasCollision, moveGhost, movePlayer, serialiseGame, tileId,
+  hasCollision, moveGhost, movePlayer, serialiseGame,
 } from './shared/game-core.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = process.cwd();
+const PUBLIC_ROOT = join(ROOT, 'public');
 const SIMULATION_TICK_MS = 40; // 25 authoritative updates per second.
 const SNAPSHOT_TICK_MS = 50; // 20 compact packets per second.
 const DIRECTION_CODE = { up: 0, down: 1, left: 2, right: 3 };
@@ -127,10 +128,8 @@ function tickRoom(room) {
   room.game.ghostClock += elapsed;
   while (room.game.state === 'playing' && room.game.playerClock >= playerStep) {
     room.game.playerClock -= playerStep;
-    const dotId = tileId(room.game, room.game.player.x, room.game.player.y);
-    const ateDot = room.game.dots.has(dotId);
-    movePlayer(room.game);
-    if (ateDot) room.dirtyDots.push(dotId);
+    const collectedDot = movePlayer(room.game);
+    if (collectedDot !== null) room.dirtyDots.push(collectedDot);
     if (room.game.mode === 'coin' && room.game.dots.size === 0) room.game.state = 'won';
   }
   while (room.game.state === 'playing' && room.game.ghostClock >= ghostStep) {
@@ -225,10 +224,13 @@ function parseFrames(client, chunk) {
 }
 
 const server = createServer((request, response) => {
-  const requestPath = decodeURIComponent((request.url || '/').split('?')[0]);
+  let requestPath;
+  try { requestPath = decodeURIComponent((request.url || '/').split('?')[0]); } catch { response.writeHead(400); response.end('Bad request'); return; }
   const relativePath = requestPath === '/' ? 'index.html' : requestPath.replace(/^\/+/, '');
-  const filePath = normalize(join(ROOT, relativePath));
-  if (!filePath.startsWith(ROOT) || !existsSync(filePath) || statSync(filePath).isDirectory()) { response.writeHead(404); response.end('Not found'); return; }
+  const staticRoot = requestPath.startsWith('/assets/') ? PUBLIC_ROOT : ROOT;
+  const filePath = resolve(staticRoot, relativePath);
+  const pathFromRoot = relative(staticRoot, filePath);
+  if (pathFromRoot.startsWith('..') || isAbsolute(pathFromRoot) || !existsSync(filePath) || statSync(filePath).isDirectory()) { response.writeHead(404); response.end('Not found'); return; }
   response.writeHead(200, { 'Content-Type': MIME_TYPES[extname(filePath)] || 'application/octet-stream' });
   createReadStream(filePath).pipe(response);
 });
